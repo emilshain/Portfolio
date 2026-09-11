@@ -5,6 +5,7 @@ import { useRef, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useLenis } from "lenis/react";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -26,6 +27,7 @@ export const ELogo3DSection = () => {
   const lineRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const [scrollDistance, setScrollDistance] = useState(0);
   const [isDesktop, setIsDesktop] = useState(false);
+  const lenis = useLenis();
 
   useEffect(() => {
     const checkDesktop = () => {
@@ -48,6 +50,13 @@ export const ELogo3DSection = () => {
     const getLineMaxScroll = (line: HTMLSpanElement) => Math.max(0, line.scrollWidth - window.innerWidth);
     const getOverallMaxScroll = () => Math.max(...lines.map(getLineMaxScroll));
     const getHoldDistance = () => Math.max(getOverallMaxScroll(), window.innerHeight);
+
+    // After the pin releases, make ONLY this section's content lag behind the
+    // page scroll with a scrubbed transform, so it visually scrolls away slower
+    // while the rest of the page (incl. Selected Works) keeps normal speed.
+    // This decouples the two sections — no global scroll multiplier involved.
+    const EXIT_SLOW_FACTOR = 0.45; // 1 = normal speed, 0 = frozen
+    const getExitDistance = () => Math.round(window.innerHeight * 0.8);
 
     setScrollDistance(getHoldDistance());
 
@@ -83,6 +92,27 @@ export const ELogo3DSection = () => {
     };
     window.addEventListener("resize", handleResize);
 
+    // ScrollTrigger anchored to the section's scroll-away range: starts at the
+    // actual pin release (end of the wrapper's hold distance, which is >= the
+    // horizontal scrub) and runs over the exit distance. The downward lag
+    // cancels part of the upward movement, so the section's visual exit is
+    // slower than the page scroll around it — never during the pin.
+    const exitTl = gsap.timeline({
+      scrollTrigger: {
+        id: "elogo3d-exit-lag",
+        trigger: wrapper,
+        start: () => `top+=${getHoldDistance()} top`,
+        end: () => `top+=${getHoldDistance() + getExitDistance()} top`,
+        scrub: 0.5, // slight smoothing for a natural catch-up feel
+        invalidateOnRefresh: true,
+      },
+    });
+    exitTl.fromTo(
+      section,
+      { y: 0 },
+      { y: () => getExitDistance() * (1 - EXIT_SLOW_FACTOR), ease: "none", immediateRender: false }
+    );
+
     let handleMouseMove: ((e: MouseEvent) => void) | null = null;
     if (isDesktop) {
       handleMouseMove = (e: MouseEvent) => {
@@ -101,6 +131,9 @@ export const ELogo3DSection = () => {
 
     return () => {
       disposed = true;
+      exitTl.scrollTrigger?.kill();
+      exitTl.kill();
+      gsap.set(section, { clearProps: "transform" });
       window.removeEventListener("resize", handleResize);
       if (handleMouseMove) {
         section.removeEventListener("mousemove", handleMouseMove);
@@ -108,7 +141,7 @@ export const ELogo3DSection = () => {
       tl.scrollTrigger?.kill();
       tl.kill();
     };
-  }, [isDesktop]);
+  }, [isDesktop, lenis]);
 
   return (
     <div ref={wrapperRef} className="relative w-full" style={{ height: `calc(100vh + ${scrollDistance}px)` }}>
